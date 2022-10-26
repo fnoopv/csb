@@ -3,8 +3,6 @@ package csb
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"encoding/xml"
 	"io"
 	"net/http"
 	"net/url"
@@ -112,10 +110,10 @@ func (c *CSBClient) SetBody(body []byte) *CSBClient {
 }
 
 // Do 执行请求
-func (c *CSBClient) Do(ctx context.Context, result interface{}) *CSBError {
+func (c *CSBClient) Do(ctx context.Context) ([]byte, *CSBError) {
 	// 参数验证
 	if err := c.validate(); err != nil {
-		return err
+		return nil, err
 	}
 	client := &http.Client{}
 
@@ -132,7 +130,7 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) *CSBError {
 	if c.QueryParam != nil {
 		_, err := url.Parse(link)
 		if err != nil {
-			return &CSBError{Message: "bad request url"}
+			return nil, &CSBError{Message: "bad request url"}
 		}
 		link = appendParams(link, c.QueryParam)
 	}
@@ -145,7 +143,7 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) *CSBError {
 
 	req, err := http.NewRequest(strings.ToLower(c.ApiMethod), link, bytes.NewReader(requestBody))
 	if err != nil {
-		return &CSBError{Message: "failed to construct http post request", CauseErr: err}
+		return nil, &CSBError{Message: "failed to construct http post request", CauseErr: err}
 	}
 	req = req.WithContext(ctx)
 
@@ -170,33 +168,26 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) *CSBError {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return &CSBError{Message: "failed to request http post", CauseErr: err}
+		return nil, &CSBError{Message: "failed to request http post", CauseErr: err}
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &CSBError{Message: "read response body failed", CauseErr: err}
+		return nil, &CSBError{Message: "read response body failed", CauseErr: err}
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(contentType, "application/json") {
-		if err := json.Unmarshal(body, result); err != nil {
-			return &CSBError{Message: "json unmarshal failed", CauseErr: err}
-		}
-	} else if strings.Contains(contentType, "text/xml") {
-		if err := xml.Unmarshal(body, result); err != nil {
-			return &CSBError{Message: "xml unmarshal failed", CauseErr: err}
-		}
-	} else {
-		result = string(body)
-	}
-
-	return nil
+	return body, nil
 }
 
 // signParams 对参数进行签名
-func signParams(params map[string]string, api string, version string, ak string, sk string) (headMaps map[string]string) {
+func signParams(
+	params map[string]string,
+	api string,
+	version string,
+	ak string,
+	sk string,
+) (headMaps map[string]string) {
 	headMaps = make(map[string]string)
 
 	params[API_NAME_KEY] = api
@@ -231,7 +222,9 @@ func (c *CSBClient) validate() *CSBError {
 		return &CSBError{Message: "bad method, only support 'get' or 'post'"}
 	}
 	if c.AccessKey == "" || c.SecretKey == "" {
-		return &CSBError{Message: "bad request params, accessKey and secretKey must defined together"}
+		return &CSBError{
+			Message: "bad request params, accessKey and secretKey must defined together",
+		}
 	}
 	if c.ApiName == "" || c.ApiVersion == "" {
 		return &CSBError{Message: "bad request params, api or version not defined"}
