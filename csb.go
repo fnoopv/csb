@@ -1,21 +1,21 @@
 package csb
 
 import (
-	"bytes"
 	"context"
-	"io"
-	"net/http"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/imroc/req/v3"
 )
 
 // CSBClient CSBClient
 type CSBClient struct {
-	Url         string            // csb地址
-	AccessKey   string            // ak
-	SecretKey   string            // sk
+	url         string            // csb地址
+	accessKey   string            // ak
+	secretKey   string            // sk
 	ApiName     string            // 接口名称
 	ApiMethod   string            // 接口请求方法
 	ApiVersion  string            // 接口版本
@@ -24,41 +24,46 @@ type CSBClient struct {
 	QueryParam  map[string]string // query参数
 	FormParam   map[string]string // 表单数据
 	Body        []byte            // 请求体,文件、表单、JSON等
+	client      *req.Client
 }
 
 const (
-	CSB_SDK_VERSION = "1.1.0"
-
-	API_NAME_KEY               = "_api_name"
-	VERSION_KEY                = "_api_version"
-	ACCESS_KEY                 = "_api_access_key"
-	SECRET_KEY                 = "_api_secret_key"
-	SIGNATURE_KEY              = "_api_signature"
-	TIMESTAMP_KEY              = "_api_timestamp"
-	RESTFUL_PATH_SIGNATURE_KEY = "csb_restful_path_signature_key" //TODO: fix the terrible key name!
+	apiNameKey       = "_api_name"
+	apiVersionKey    = "_api_version"
+	accessKey        = "_api_access_key"
+	secretKey        = "_api_secret_key"
+	signatureKey     = "_api_signature"
+	timestampKey     = "_api_timestamp"
+	defaultUserAgent = "csbBroker"
 )
 
 // NewCSBClient 返回新的CSB客户端
-func NewCSBClient() *CSBClient {
-	return &CSBClient{}
-}
+func NewCSBClient(url, accessKey, secretKey string) *CSBClient {
 
-// SetUrl 设置CSB地址
-func (c *CSBClient) SetUrl(url string) *CSBClient {
-	c.Url = url
-	return c
-}
-
-// SetAccessKey 设置ak
-func (c *CSBClient) SetAccessKey(accessKey string) *CSBClient {
-	c.AccessKey = accessKey
-	return c
-}
-
-// SetSecretKey 设置sk
-func (c *CSBClient) SetSecretKey(secretKey string) *CSBClient {
-	c.SecretKey = secretKey
-	return c
+	client := req.C().SetBaseURL(url).SetCommonError(&CSBError{}).OnBeforeRequest(func(c *req.Client, r *req.Request) error {
+		if r.RetryAttempt > 0 { // Ignore on retry.
+			return nil
+		}
+		r.EnableDump()
+		return nil
+	}).OnAfterResponse(func(client *req.Client, resp *req.Response) error {
+		if err, ok := resp.Error().(*CSBError); ok {
+			// Server returns an error message, convert it to human-readable go error.
+			return err
+		}
+		// Corner case: neither an error response nor a success response,
+		// dump content to help troubleshoot.
+		if !resp.IsSuccess() {
+			return fmt.Errorf("bad response, raw dump:\n%s", resp.Dump())
+		}
+		return nil
+	})
+	return &CSBClient{
+		client:    client,
+		url:       url,
+		accessKey: accessKey,
+		secretKey: secretKey,
+	}
 }
 
 // SetApiName 设置请求接口的名称
@@ -110,12 +115,11 @@ func (c *CSBClient) SetBody(body []byte) *CSBClient {
 }
 
 // Do 执行请求
-func (c *CSBClient) Do(ctx context.Context) ([]byte, *CSBError) {
+func (c *CSBClient) Do(ctx context.Context, result interface{}) *CSBError {
 	// 参数验证
 	if err := c.validate(); err != nil {
-		return nil, err
+		return err
 	}
-	client := &http.Client{}
 
 	// 表单数据设置
 	formData := url.Values{}
@@ -125,27 +129,13 @@ func (c *CSBClient) Do(ctx context.Context) ([]byte, *CSBError) {
 		}
 	}
 
-	// merge query param to url
-	link := c.Url
-	if c.QueryParam != nil {
-		_, err := url.Parse(link)
-		if err != nil {
-			return nil, &CSBError{Message: "bad request url"}
-		}
-		link = appendParams(link, c.QueryParam)
-	}
-
 	// merge body
 	requestBody := c.Body
 	if c.Body == nil {
 		requestBody = []byte(formData.Encode())
 	}
 
-	req, err := http.NewRequest(strings.ToLower(c.ApiMethod), link, bytes.NewReader(requestBody))
-	if err != nil {
-		return nil, &CSBError{Message: "failed to construct http post request", CauseErr: err}
-	}
-	req = req.WithContext(ctx)
+	req := c.client.R().SetContext(ctx).SetQueryParams(c.QueryParam).SetBodyBytes(requestBody)
 
 	// merge params
 	params := c.QueryParam
@@ -156,28 +146,25 @@ func (c *CSBClient) Do(ctx context.Context) ([]byte, *CSBError) {
 	}
 
 	// add request header
-	signHeaders := signParams(params, c.ApiName, c.ApiVersion, c.AccessKey, c.SecretKey)
+	signHeaders := signParams(params, c.ApiName, c.ApiVersion, c.accessKey, c.secretKey)
 	if c.Headers != nil {
-		for k, v := range c.Headers {
-			req.Header.Add(k, v)
+		req.SetHeaders(c.Headers)
+	}
+	req.SetHeaders(signHeaders).SetHeader("Content-Type", c.ContentType).SetResult(result)
+
+	method := strings.ToLower(c.ApiMethod)
+	if method == "get" {
+		if _, err := req.Get(""); err != nil {
+			return &CSBError{Message: "failed to request :", CauseErr: err}
 		}
+		return nil
+	} else if method == "post" {
+		if _, err := req.Post(""); err != nil {
+			return &CSBError{Message: "failed to request :", CauseErr: err}
+		}
+		return nil
 	}
-	for k, v := range signHeaders {
-		req.Header.Add(k, v)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, &CSBError{Message: "failed to request http post", CauseErr: err}
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &CSBError{Message: "read response body failed", CauseErr: err}
-	}
-
-	return body, nil
+	return &CSBError{Message: "only support get or post"}
 }
 
 // signParams 对参数进行签名
@@ -190,27 +177,25 @@ func signParams(
 ) (headMaps map[string]string) {
 	headMaps = make(map[string]string)
 
-	params[API_NAME_KEY] = api
-	headMaps[API_NAME_KEY] = api
+	params[apiNameKey] = api
+	headMaps[apiNameKey] = api
 
-	params[VERSION_KEY] = version
-	headMaps[VERSION_KEY] = version
+	params[apiVersionKey] = version
+	headMaps[apiVersionKey] = version
 
 	v := time.Now().UnixNano() / 1000000
-	params[TIMESTAMP_KEY] = strconv.FormatInt(v, 10)
-	headMaps[TIMESTAMP_KEY] = strconv.FormatInt(v, 10)
+	params[timestampKey] = strconv.FormatInt(v, 10)
+	headMaps[timestampKey] = strconv.FormatInt(v, 10)
 
-	if ak != "" {
-		params[ACCESS_KEY] = ak
-		headMaps[ACCESS_KEY] = ak
+	params[accessKey] = ak
+	headMaps[accessKey] = ak
 
-		delete(params, SECRET_KEY)
-		delete(params, SIGNATURE_KEY)
+	delete(params, secretKey)
+	delete(params, signatureKey)
 
-		signValue := doSign(params, sk)
+	signValue := doSign(params, sk)
 
-		headMaps[SIGNATURE_KEY] = signValue
-	}
+	headMaps[signatureKey] = signValue
 
 	return headMaps
 }
@@ -221,7 +206,7 @@ func (c *CSBClient) validate() *CSBError {
 	if method != "get" && method != "post" {
 		return &CSBError{Message: "bad method, only support 'get' or 'post'"}
 	}
-	if c.AccessKey == "" || c.SecretKey == "" {
+	if c.accessKey == "" || c.secretKey == "" {
 		return &CSBError{
 			Message: "bad request params, accessKey and secretKey must defined together",
 		}
