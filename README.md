@@ -6,45 +6,51 @@
 
 使用方法
 ```go
-package main
+package cron
 
 import (
-    "context"
-    "fmt"
+	"context"
+	"fmt"
 
-    "github.com/fnoopv/csb"
+	"github.com/fnoopv/csb"
 )
 
-type User struct {
-    ID int `json:"id"`
-    Name string `json:"name"`
-    Avatar string `json:"avatar"`
-}
-
-func main() {
-    client := csb.NewCSBClient()
-    client.SetUrl("http://xxx.xx.xx.xx:8888")
-    client.SetAccessKey("asdasdasdsa")
-    client.SetSecretKey("asfasfafasfas==")
-    client.SetApiName("user")
-    client.SetApiMethod("get")
-    client.SetApiVersion("1.0")
-    client.SetContentType("application/json; charset=utf8")
-    // 添加其他请求头
-    headers := map[string]string
-    headers["abc"] = "abcdef"
-    client.SetHeaders(headers)
-    // 添加查询参数
-    queryParams := map[string]string
-    queryParams["id"] = "123"
-    client.SetQueryParam(queryParams)
-
-    //发起请求
-    user := User{}
-    if err := client.Do(context.Background(), &user); err != nil {
-        fmt.Println(err)
-        return
+type Result struct {
+	Data []struct {
+		UserID          string `json:"USER_ID"`
+		Mobile          string `json:"MOBILE"`
+		Email           string `json:"EMAIL,omitempty"`
     }
-    fmt.Println(user)
+	DataSize    int    `json:"dataSize"`
+	Total       int    `json:"total"`
+	ResultCode  int    `json:"resultCode"`
+	ResultMsg   string `json:"resultMsg"`
+	HasNextPage bool   `json:"hasNextPage"`
 }
+
+func SyncAvicUser() {
+	c := csb.NewCSBClient("http://dadsa.com:8888/CSB", "dasdsa", "dadadadas=")
+	c.SetApiName("users")
+	c.SetApiMethod("get")
+	c.SetApiVersion("1.0.0")
+	c.SetContentType("application/json;charset=utf-8")
+
+    // 添加query参数
+	queryParam := make(map[string]string)
+	queryParam["startTime"] = "0"
+	c.SetQueryParam(queryParam)
+    // 添加请求头
+	headers := make(map[string]string)
+	headers["appKey"] = "dasdadasd"
+	c.SetHeaders(headers)
+
+	result := Result{}
+	err := c.Do(context.Background(), &result)
+	if err != nil {
+		fmt.Printf("request error: %s\n", err)
+		return
+	}
+    fmt.Println(result)
+}
+
 ```
