@@ -188,6 +188,8 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) *CSBError {
 		if err := xml.Unmarshal(body, result); err != nil {
 			return &CSBError{Message: "xml unmarshal failed", CauseErr: err}
 		}
+	} else {
+		result = string(body)
 	}
 
 	return nil
