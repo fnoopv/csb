@@ -2,6 +2,7 @@ package csb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -40,21 +41,9 @@ const (
 // NewCSBClient 返回新的CSB客户端
 func NewCSBClient(url, accessKey, secretKey string) *CSBClient {
 
-	client := req.C().SetBaseURL(url).SetCommonError(&CSBError{}).OnBeforeRequest(func(c *req.Client, r *req.Request) error {
+	client := req.C().SetBaseURL(url).OnBeforeRequest(func(c *req.Client, r *req.Request) error {
 		if r.RetryAttempt > 0 { // Ignore on retry.
 			return nil
-		}
-		r.EnableDump()
-		return nil
-	}).OnAfterResponse(func(client *req.Client, resp *req.Response) error {
-		if err, ok := resp.Error().(*CSBError); ok {
-			// Server returns an error message, convert it to human-readable go error.
-			return err
-		}
-		// Corner case: neither an error response nor a success response,
-		// dump content to help troubleshoot.
-		if !resp.IsSuccess() {
-			return fmt.Errorf("bad response, raw dump:\n%s", resp.Dump())
 		}
 		return nil
 	})
@@ -115,7 +104,7 @@ func (c *CSBClient) SetBody(body []byte) *CSBClient {
 }
 
 // Do 执行请求
-func (c *CSBClient) Do(ctx context.Context, result interface{}) *CSBError {
+func (c *CSBClient) Do(ctx context.Context, result interface{}) error {
 	// 参数验证
 	if err := c.validate(); err != nil {
 		return err
@@ -155,16 +144,17 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) *CSBError {
 	method := strings.ToLower(c.ApiMethod)
 	if method == "get" {
 		if _, err := req.Get(""); err != nil {
-			return &CSBError{Message: "failed to request :", CauseErr: err}
+			fmt.Printf("err: %v", err)
+			return fmt.Errorf("failed to do get request: %v", err)
 		}
 		return nil
 	} else if method == "post" {
 		if _, err := req.Post(""); err != nil {
-			return &CSBError{Message: "failed to request :", CauseErr: err}
+			return fmt.Errorf("failed to do post request: %v", err)
 		}
 		return nil
 	}
-	return &CSBError{Message: "only support get or post"}
+	return errors.New("only support get or post")
 }
 
 // signParams 对参数进行签名
@@ -201,21 +191,19 @@ func signParams(
 }
 
 // validate 验证参数
-func (c *CSBClient) validate() *CSBError {
+func (c *CSBClient) validate() error {
 	method := strings.ToLower(c.ApiMethod)
 	if method != "get" && method != "post" {
-		return &CSBError{Message: "bad method, only support 'get' or 'post'"}
+		return errors.New("bad method, only support 'get' or 'post'")
 	}
 	if c.accessKey == "" || c.secretKey == "" {
-		return &CSBError{
-			Message: "bad request params, accessKey and secretKey must defined together",
-		}
+		return errors.New("bad request params, accessKey and secretKey must defined together")
 	}
 	if c.ApiName == "" || c.ApiVersion == "" {
-		return &CSBError{Message: "bad request params, api or version not defined"}
+		return errors.New("bad request params, api or version not defined")
 	}
 	if c.ContentType == "" {
-		return &CSBError{Message: "content-type must defined"}
+		return errors.New("content-type must defined")
 	}
 
 	return nil
