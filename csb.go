@@ -127,7 +127,10 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) error {
 	req := c.client.R().SetContext(ctx).SetQueryParams(c.QueryParam).SetBodyBytes(requestBody)
 
 	// merge params
-	params := c.QueryParam
+	params := make(map[string]string)
+  if c.QueryParam != nil {
+    params = c.QueryParam
+  }
 	if c.FormParam != nil {
 		for k, v := range c.FormParam {
 			params[k] = v
