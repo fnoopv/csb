@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
@@ -128,9 +129,9 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) error {
 
 	// merge params
 	params := make(map[string]string)
-  if c.QueryParam != nil {
-    params = c.QueryParam
-  }
+	if c.QueryParam != nil {
+		params = c.QueryParam
+	}
 	if c.FormParam != nil {
 		for k, v := range c.FormParam {
 			params[k] = v
@@ -152,8 +153,18 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) error {
 		}
 		return nil
 	} else if method == "post" {
-		if _, err := req.Post(""); err != nil {
+		res, err := req.Post("")
+		if err != nil {
 			return fmt.Errorf("failed to do post request: %v", err)
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode > 299 {
+			byteBody, err := io.ReadAll(res.Body)
+			if err != nil {
+				return fmt.Errorf("status code: %v, read response body failed: %v", res.StatusCode, err)
+			}
+			return fmt.Errorf("status code %d, body: %v", res.StatusCode, string(byteBody))
 		}
 		return nil
 	}
