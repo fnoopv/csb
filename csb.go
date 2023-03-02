@@ -141,9 +141,9 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) error {
 	// add request header
 	signHeaders := signParams(params, c.ApiName, c.ApiVersion, c.accessKey, c.secretKey)
 	if c.Headers != nil {
-		req.SetHeaders(c.Headers)
+		req.SetHeadersNonCanonical(c.Headers)
 	}
-	req.SetHeaders(signHeaders).SetHeader("Content-Type", c.ContentType).SetResult(result)
+	req.SetHeadersNonCanonical(signHeaders).SetHeader("Content-Type", c.ContentType).SetResult(result)
 
 	method := strings.ToLower(c.ApiMethod)
 	if method == "get" {
