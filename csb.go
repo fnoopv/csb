@@ -105,10 +105,10 @@ func (c *CSBClient) SetBody(body []byte) *CSBClient {
 }
 
 // Do 执行请求
-func (c *CSBClient) Do(ctx context.Context, result interface{}) error {
+func (c *CSBClient) Do(ctx context.Context, result interface{}) (*req.Response, error) {
 	// 参数验证
 	if err := c.validate(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// 表单数据设置
@@ -147,28 +147,24 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) error {
 
 	method := strings.ToLower(c.ApiMethod)
 	if method == "get" {
-		if _, err := req.Get(""); err != nil {
-			fmt.Printf("err: %v", err)
-			return fmt.Errorf("failed to do get request: %v", err)
-		}
-		return nil
+		return req.Get("")
 	} else if method == "post" {
 		res, err := req.Post("")
 		if err != nil {
-			return fmt.Errorf("failed to do post request: %v", err)
+			return res, fmt.Errorf("failed to do post request: %v", err)
 		}
 		defer res.Body.Close()
 
 		if res.StatusCode > 299 {
 			byteBody, err := io.ReadAll(res.Body)
 			if err != nil {
-				return fmt.Errorf("status code: %v, read response body failed: %v", res.StatusCode, err)
+				return res, fmt.Errorf("status code: %v, read response body failed: %v", res.StatusCode, err)
 			}
-			return fmt.Errorf("status code %d, body: %v", res.StatusCode, string(byteBody))
+			return res, fmt.Errorf("status code %d, body: %v", res.StatusCode, string(byteBody))
 		}
-		return nil
+		return res, nil
 	}
-	return errors.New("only support get or post")
+	return nil, errors.New("only support get or post")
 }
 
 // signParams 对参数进行签名
