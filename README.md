@@ -40,8 +40,8 @@ func SyncAvicUser() {
 	queryParam["startTime"] = "0"
 	c.SetQueryParam(queryParam)
     // 添加请求头
-	headers := make(map[string]string)
-	headers["appKey"] = "dasdadasd"
+	headers := make(map[string][]string)
+	headers["appKey"] = []string{"dasdadasd"}
 	c.SetHeaders(headers)
 
 	result := Result{}
