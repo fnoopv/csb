@@ -3,30 +3,28 @@ package csb
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/imroc/req/v3"
+	"github.com/go-resty/resty/v2"
 )
 
 // CSBClient CSBClient
 type CSBClient struct {
-	url         string            // csb地址
-	accessKey   string            // ak
-	secretKey   string            // sk
-	ApiName     string            // 接口名称
-	ApiMethod   string            // 接口请求方法
-	ApiVersion  string            // 接口版本
-	ContentType string            // 请求的content-type
-	Headers     map[string]string // 请求头
-	QueryParam  map[string]string // query参数
-	FormParam   map[string]string // 表单数据
-	Body        []byte            // 请求体,文件、表单、JSON等
-	client      *req.Client
+	url         string              // csb地址
+	accessKey   string              // ak
+	secretKey   string              // sk
+	ApiName     string              // 接口名称
+	ApiMethod   string              // 接口请求方法
+	ApiVersion  string              // 接口版本
+	ContentType string              // 请求的content-type
+	Headers     map[string][]string // 请求头
+	QueryParam  map[string]string   // query参数
+	FormParam   map[string]string   // 表单数据
+	Body        []byte              // 请求体,文件、表单、JSON等
+	client      *resty.Client
 }
 
 const (
@@ -42,14 +40,8 @@ const (
 // NewCSBClient 返回新的CSB客户端
 func NewCSBClient(url, accessKey, secretKey string) *CSBClient {
 
-	client := req.C().SetBaseURL(url).OnBeforeRequest(func(c *req.Client, r *req.Request) error {
-		if r.RetryAttempt > 0 { // Ignore on retry.
-			return nil
-		}
-		return nil
-	})
 	return &CSBClient{
-		client:    client,
+		client:    resty.New(),
 		url:       url,
 		accessKey: accessKey,
 		secretKey: secretKey,
@@ -81,7 +73,7 @@ func (c *CSBClient) SetContentType(contentType string) *CSBClient {
 }
 
 // SetHeaders 设置请求头
-func (c *CSBClient) SetHeaders(headers map[string]string) *CSBClient {
+func (c *CSBClient) SetHeaders(headers map[string][]string) *CSBClient {
 	c.Headers = headers
 	return c
 }
@@ -105,10 +97,11 @@ func (c *CSBClient) SetBody(body []byte) *CSBClient {
 }
 
 // Do 执行请求
-func (c *CSBClient) Do(ctx context.Context, result interface{}) (*req.Response, error) {
+func (c *CSBClient) Do(ctx context.Context) (res *resty.Response, body []byte, err error) {
+
 	// 参数验证
 	if err := c.validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// 表单数据设置
@@ -119,13 +112,10 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) (*req.Response, 
 		}
 	}
 
-	// merge body
 	requestBody := c.Body
 	if c.Body == nil {
 		requestBody = []byte(formData.Encode())
 	}
-
-	req := c.client.R().SetContext(ctx).SetQueryParams(c.QueryParam).SetBodyBytes(requestBody)
 
 	// merge params
 	params := make(map[string]string)
@@ -140,31 +130,26 @@ func (c *CSBClient) Do(ctx context.Context, result interface{}) (*req.Response, 
 
 	// add request header
 	signHeaders := signParams(params, c.ApiName, c.ApiVersion, c.accessKey, c.secretKey)
-	if c.Headers != nil {
-		req.SetHeadersNonCanonical(c.Headers)
-	}
-	req.SetHeadersNonCanonical(signHeaders).SetHeader("Content-Type", c.ContentType).SetResult(result)
+
+	r := c.client.R().
+		SetQueryParams(c.QueryParam).
+		SetBody(requestBody).
+		SetHeader("Content-Type", c.ContentType).
+		SetHeaderMultiValues(signHeaders).
+		SetHeaderMultiValues(c.Headers)
 
 	method := strings.ToLower(c.ApiMethod)
-	if method == "get" {
-		return req.Get("")
-	} else if method == "post" {
-		res, err := req.Post("")
-		if err != nil {
-			return res, fmt.Errorf("failed to do post request: %v", err)
-		}
-		defer res.Body.Close()
 
-		if res.StatusCode > 299 {
-			byteBody, err := io.ReadAll(res.Body)
-			if err != nil {
-				return res, fmt.Errorf("status code: %v, read response body failed: %v", res.StatusCode, err)
-			}
-			return res, fmt.Errorf("status code %d, body: %v", res.StatusCode, string(byteBody))
-		}
-		return res, nil
+	if method == "get" {
+		res, err = r.Get(c.url)
+	} else if method == "post" {
+		res, err = r.Post(c.url)
 	}
-	return nil, errors.New("only support get or post")
+	if err != nil {
+		return res, nil, err
+	}
+
+	return res, res.Body(), nil
 }
 
 // signParams 对参数进行签名
@@ -174,28 +159,28 @@ func signParams(
 	version string,
 	ak string,
 	sk string,
-) (headMaps map[string]string) {
-	headMaps = make(map[string]string)
+) (headMaps map[string][]string) {
+	headMaps = make(map[string][]string)
 
 	params[apiNameKey] = api
-	headMaps[apiNameKey] = api
+	headMaps[apiNameKey] = []string{api}
 
 	params[apiVersionKey] = version
-	headMaps[apiVersionKey] = version
+	headMaps[apiVersionKey] = []string{version}
 
 	v := time.Now().UnixNano() / 1000000
 	params[timestampKey] = strconv.FormatInt(v, 10)
-	headMaps[timestampKey] = strconv.FormatInt(v, 10)
+	headMaps[timestampKey] = []string{strconv.FormatInt(v, 10)}
 
 	params[accessKey] = ak
-	headMaps[accessKey] = ak
+	headMaps[accessKey] = []string{ak}
 
 	delete(params, secretKey)
 	delete(params, signatureKey)
 
 	signValue := doSign(params, sk)
 
-	headMaps[signatureKey] = signValue
+	headMaps[signatureKey] = []string{signValue}
 
 	return headMaps
 }
